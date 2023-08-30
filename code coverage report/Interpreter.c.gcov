@@ -1,0 +1,1465 @@
+        -:    0:Source:nuclei.c
+        -:    0:Graph:nuclei.gcno
+        -:    0:Data:nuclei.gcda
+        -:    0:Runs:1
+        -:    0:Programs:1
+        -:    1:#include "nuclei.h"
+        -:    2:
+        1:    3:int main(int argc, char* argv[]) {
+        -:    4:    Program* p;
+        1:    5:    p = READFILE(*&argv[argc - 1]);
+        1:    6:    startProgram(p);
+        1:    7:    free(p);
+        1:    8:    tests();
+        1:    9:    return 0;
+        -:   10:}
+        -:   11:
+       14:   12:Program* READFILE(char* argv) {
+        -:   13:    FILE* fp;
+       14:   14:    if (!(fp = fopen(argv, "r"))) {
+    #####:   15:        fprintf(stderr, "Cannot Read %s\n", argv);
+    #####:   16:        exit(EXIT_FAILURE);
+        -:   17:    }
+       14:   18:    Program* p = ncalloc(1, sizeof(Program));
+        -:   19:    int start = 0;
+       14:   20:    strcpy(p->str, "");
+       14:   21:    char buffer[MAXNUMTOKENS] = "";
+      170:   22:    bool getFirstLine = false;
+      170:   23:    while ((fscanf(fp, "%[^\n]\n", buffer)) != EOF) {
+      156:   24:        separateBraces(buffer);
+      156:   25:        strcpy(p->wds[start], buffer);
+      156:   26:        if (buffer[0] != COMMENT) {
+      149:   27:            if (!strsame(p->str, "")) {
+      135:   28:                strcat(p->str, SPACE);
+      135:   29:            }
+      149:   30:            strcat(p->str, buffer);
+      149:   31:            if (!getFirstLine) {
+       14:   32:                p->firstLine = start;
+        -:   33:                getFirstLine = true;
+       14:   34:            }
+        -:   35:        }
+      156:   36:        start++;
+        -:   37:    }
+        -:   38:    //check the last line of statement, return 0 if it's empty
+       14:   39:    p->lastLine = start > 0 ? (start - 1) : 0;
+       14:   40:    fclose(fp);
+       14:   41:    return p;
+       14:   42:}
+        -:   43:
+       14:   44:bool startProgram(Program* p) {
+       14:   45:    if (!strsame(p->wds[p->firstLine], STARTPARENS)) {
+    #####:   46:        on_error("Wrong start statement ; ");
+    #####:   47:    }
+       14:   48:    if (!strsame(p->wds[p->lastLine], ENDPARENS)) {
+    #####:   49:        on_error("Wrong end statement ;  ");
+    #####:   50:    }
+       14:   51:    char instrcts[MAXNUMTOKENS] = "";
+       14:   52:    strcpy(instrcts, p->str);
+       14:   53:    unParens(instrcts), removeSpaceAtSides(instrcts);
+       14:   54:    if (instrcts[0] != '(') {
+    #####:   55:        on_error("Wrong instrcts begin statement ; ");
+    #####:   56:    }
+        -:   57:#ifdef INTERP
+       14:   58:    Var varInfo[NUMALPH] = { {false,NIL} };
+       14:   59:    if (interpInstrcts(varInfo, instrcts)) {
+      378:   60:        for (int i = 0; i < NUMALPH;i++) {
+      364:   61:            varInfo[i].list = NIL;
+      364:   62:            varInfo[i].isSet = false;
+        -:   63:        }
+       14:   64:        return true;
+        -:   65:    }
+        -:   66:#else 
+        -:   67:    if (parseInstrcts(instrcts)) {
+        -:   68:        printf("Parse OK\n");
+        -:   69:        return true;
+        -:   70:    }
+        -:   71:#endif
+    #####:   72:    return false;
+       14:   73:}
+        -:   74:
+        -:   75:#ifdef INTERP
+      251:   76:bool interpInstrcts(Var* varInfo, char* instrcts) {
+      251:   77:    if (!instrcts) {
+    #####:   78:        on_error("Empty Instrcts Statement");
+    #####:   79:    }
+      251:   80:    char instrct[MAXNUMTOKENS] = "", rest[MAXNUMTOKENS] = "";
+      251:   81:    strcpy(instrct, instrcts), strcpy(rest, instrcts);
+      251:   82:    sepFirstInstrct(instrct, rest);
+      251:   83:    if (!interpInstrct(varInfo, instrct)) {
+    #####:   84:        return false;
+        -:   85:    }
+      251:   86:    if (strsame(rest, "")) {
+       60:   87:        return true;
+        -:   88:    }
+      191:   89:    return interpInstrcts(varInfo, rest);
+      251:   90:}
+        -:   91:
+      251:   92:bool interpInstrct(Var* varInfo, char* instrct) {
+      251:   93:    unParens(instrct), removeSpaceAtSides(instrct);
+      251:   94:    char instrct_token[MAXNUMTOKENS] = "", rest[MAXNUMTOKENS] = "";
+      251:   95:    strcpy(instrct_token, instrct), strcpy(rest, instrct);
+      251:   96:    getFirstToken(instrct_token, rest);
+      251:   97:    if (strsame(instrct_token, "SET")) {
+      163:   98:        return interpSetFunc(varInfo, instrct_token, rest);
+        -:   99:    }
+       88:  100:    else if (strsame(instrct_token, "RESET")) {
+        2:  101:        return interpResetFunc(varInfo, instrct_token, rest);
+        -:  102:    }
+       86:  103:    else if (strsame(instrct_token, "PRINT")) {
+       65:  104:        return interpPrintFunc(varInfo, instrct_token, rest);
+        -:  105:    }
+       21:  106:    else if (strsame(instrct_token, "WHILE")) {
+        5:  107:        return interpWhileFunc(varInfo, instrct_token, rest);
+        -:  108:    }
+       16:  109:    else if (strsame(instrct_token, "IF")) {
+       14:  110:        return interpIfFunc(varInfo, instrct_token, rest);
+        -:  111:    }
+        2:  112:    else if (strsame(instrct_token, "SWAP")) {
+        2:  113:        return interpSwap(varInfo, instrct_token, rest);
+        -:  114:    }
+    #####:  115:    return false;
+      251:  116:}
+        -:  117:
+      166:  118:bool interpSetFunc(Var* varInfo, char* instrct_token, char* rest) {
+      166:  119:    if (!strsame(instrct_token, "SET")) {
+    #####:  120:        on_error("Not a set function");
+    #####:  121:    }
+      166:  122:    char token[MAXNUMTOKENS] = "";
+      166:  123:    strcpy(token, rest);
+      166:  124:    getFirstToken(token, rest);
+      166:  125:    if (!isVariable(token)) {
+    #####:  126:        on_error("Interp : Wrong set variable");
+    #####:  127:    }
+      166:  128:    if (interpList(varInfo, rest)) {
+      166:  129:        doSet(varInfo, token, rest);
+      166:  130:        return true;
+        -:  131:    }
+        -:  132:    else {
+    #####:  133:        on_error("Not a valid set target");
+        -:  134:    }
+    #####:  135:    return false;
+      166:  136:}
+        -:  137:
+        4:  138:bool interpResetFunc(Var* varInfo, char* instrct_token, char* rest) {
+        4:  139:    if (!strsame(instrct_token, "RESET")) {
+    #####:  140:        on_error("Not a reset function");
+    #####:  141:    }
+        4:  142:    if (isVariable(rest)) {
+        4:  143:        doReset(varInfo, rest);
+        4:  144:        return true;
+        -:  145:    }
+    #####:  146:    return false;
+        -:  147:
+        4:  148:}
+        -:  149:
+        5:  150:bool interpWhileFunc(Var* varInfo, char* instrct_token, char* rest) {
+        5:  151:    if (!strsame(instrct_token, "WHILE")) {
+    #####:  152:        on_error("Not a while function");
+    #####:  153:    }
+        -:  154:    /*Get conditional statement*/
+        5:  155:    char cond_instrct[MAXNUMTOKENS] = "", statement[MAXNUMTOKENS] = "";
+        5:  156:    strcpy(cond_instrct, rest), strcpy(statement, rest);
+        5:  157:    sepFirstInstrct(cond_instrct, statement);
+        5:  158:    unParens(cond_instrct), removeSpaceAtSides(cond_instrct);
+        5:  159:    unParens(statement), removeSpaceAtSides(statement);
+        5:  160:    char token[MAXNUMTOKENS] = "", rest_token[MAXNUMTOKENS] = "";
+        5:  161:    strcpy(token, cond_instrct), strcpy(rest_token, cond_instrct);
+        5:  162:    getFirstToken(token, rest_token);
+        -:  163:    /*Check boolean function if do while */
+        5:  164:    int checkCondition = interpOpComp(varInfo, token, rest_token);
+        5:  165:    if (checkCondition > 0) {
+       35:  166:        while (checkCondition > 0) {
+       30:  167:            interpInstrcts(varInfo, statement);
+       30:  168:            checkCondition = interpOpComp(varInfo, token, rest_token);
+        -:  169:        }
+        5:  170:        return true;
+        -:  171:    }
+        -:  172:    else {
+    #####:  173:        on_error("Not a valid while condtion");
+        -:  174:    }
+    #####:  175:    return false;
+        5:  176:}
+        -:  177:
+       14:  178:bool interpIfFunc(Var* varInfo, char* instrct_token, char* rest) {
+       14:  179:    if (!strsame(instrct_token, "IF")) {
+    #####:  180:        on_error("Not a if function");
+    #####:  181:    }
+        -:  182:    /*Get conditional statement*/
+       14:  183:    char cond_instrct[MAXNUMTOKENS] = "", statement[MAXNUMTOKENS] = "";
+       14:  184:    strcpy(cond_instrct, rest), strcpy(statement, rest);
+       14:  185:    sepFirstInstrct(cond_instrct, statement);
+       14:  186:    unParens(cond_instrct), removeSpaceAtSides(cond_instrct);
+       14:  187:    char token[MAXNUMTOKENS] = "", rest_token[MAXNUMTOKENS] = "";
+       14:  188:    strcpy(token, cond_instrct), strcpy(rest_token, cond_instrct);
+       14:  189:    getFirstToken(token, rest_token);
+        -:  190:    /*Get if and else statement by store in stm1 & stm2 &*/
+       14:  191:    char stm1[MAXNUMTOKENS] = "", stm2[MAXNUMTOKENS] = "";
+       14:  192:    strcpy(stm1, statement), strcpy(stm2, statement);
+       14:  193:    sepFirstInstrct(stm1, stm2);
+       28:  194:    return doIf(varInfo, instrct_token, cond_instrct, stm1, stm2);
+       14:  195:}
+        -:  196:
+       14:  197:bool doIf(Var* varInfo, char* type, char* cond_instrct, char* stm1, char* stm2) {
+       14:  198:    if (!strsame(type, "IF")) {
+    #####:  199:        on_error("Not an if statement");
+    #####:  200:    }
+       14:  201:    unParens(stm1), removeSpaceAtSides(stm1);
+       14:  202:    unParens(stm2), removeSpaceAtSides(stm2);
+       14:  203:    char firstToken[MAXNUMTOKENS] = "", rest[MAXNUMTOKENS] = "";
+       14:  204:    strcpy(firstToken, cond_instrct), strcpy(rest, cond_instrct);
+       14:  205:    getFirstToken(firstToken, rest);
+        -:  206:    int checkCondition = 0;
+       14:  207:    if (strsame(firstToken, "ATOM")) {
+        3:  208:        checkCondition = interpAtom(varInfo, firstToken, rest);
+        3:  209:    }
+        -:  210:    else {
+       11:  211:        checkCondition = interpOpComp(varInfo, firstToken, rest);
+        -:  212:    }
+       14:  213:    if (checkCondition > 0) {
+        9:  214:        return interpInstrcts(varInfo, stm1);
+        -:  215:    }
+        -:  216:    else {
+        5:  217:        return interpInstrcts(varInfo, stm2);
+        -:  218:    }
+       14:  219:}
+        -:  220:
+      333:  221:bool interpList(Var* varInfo, char* token) {
+      333:  222:    if (strsame(token, "NIL")) {
+        1:  223:        return true;
+        -:  224:    }
+      332:  225:    else if (isLiteral(token)) {
+       46:  226:        char cpyToken[MAXNUMTOKENS] = "";
+       46:  227:        strcpy(cpyToken, token);
+       46:  228:        substring(cpyToken, 1, (int)strlen(token) - 1);
+       46:  229:        if (countValidBrace(cpyToken) == 0) {
+        -:  230:            return true;
+        -:  231:        }
+        -:  232:        else {
+    #####:  233:            fprintf(stderr, "Invalid lisp string:'%s'\n", cpyToken);
+    #####:  234:            exit(EXIT_FAILURE);
+        -:  235:        }
+       46:  236:    }
+        -:  237:    /*check if variable has been defined*/
+      286:  238:    else if (isVariable(token)) {
+       86:  239:        char var = token[0];
+       86:  240:        if (varInfo[var - 'A'].isSet) {
+       86:  241:            return true;
+        -:  242:        }
+        -:  243:        else {
+    #####:  244:            on_error("Interp: Variable has not been defined");
+        -:  245:        }
+    #####:  246:    }
+      200:  247:    else if (token[0] == '(' && countValidBrace(token) == 0) {
+      200:  248:        return true;
+        -:  249:    }
+    #####:  250:    return false;
+      333:  251:}
+        -:  252:
+       65:  253:bool interpPrintFunc(Var* varInfo, char* instrct_token, char* rest) {
+       65:  254:    char buffer[MAXNUMTOKENS] = "";
+       65:  255:    if (!strsame(instrct_token, "PRINT")) {
+    #####:  256:        on_error("Not a print function");
+    #####:  257:    }
+       65:  258:    if (isVariable(rest)) {
+       41:  259:        if (varInfo[rest[0] - 'A'].isSet) {
+       41:  260:            lisp_tostring(varInfo[rest[0] - 'A'].list, buffer);
+       41:  261:            printf("%s\n", buffer);
+       41:  262:            return true;
+        -:  263:        }
+        -:  264:        else {
+    #####:  265:            on_error("Variable has not been defined");
+        -:  266:        }
+        -:  267:    }
+       24:  268:    else if (isConstString(rest)) {
+       14:  269:        printf("%s\n", rest);
+       14:  270:        return true;
+        -:  271:    }
+       10:  272:    else if (rest[0] == '(' && countValidBrace(rest) == 0) {
+       10:  273:        lisp* target = interpListFunc(varInfo, rest);
+       10:  274:        lisp_tostring(target, buffer);
+       10:  275:        printf("%s\n", buffer);
+        -:  276:        return true;
+        -:  277:    }
+        -:  278:    else {
+    #####:  279:        fprintf(stderr, "invalid %s\n", rest);
+    #####:  280:        exit(EXIT_FAILURE);
+        -:  281:    }
+    #####:  282:    return false;
+       65:  283:}
+        -:  284:
+      202:  285:lisp* interpListFunc(Var* varInfo, char* instrct) {
+      202:  286:    char cpyInstrct[MAXNUMTOKENS] = "";
+      202:  287:    strcpy(cpyInstrct, instrct);
+      202:  288:    unParens(cpyInstrct), removeSpaceAtSides(cpyInstrct);
+      202:  289:    char token[MAXNUMTOKENS] = "", rest[MAXNUMTOKENS] = "";
+      202:  290:    strcpy(token, cpyInstrct), strcpy(rest, cpyInstrct);
+      202:  291:    getFirstToken(token, rest);
+      202:  292:    if (strsame(token, "CAR")) {
+       47:  293:        return interpCar(varInfo, token, rest);
+        -:  294:    }
+      155:  295:    else if (strsame(token, "CDR")) {
+       31:  296:        return interpCdr(varInfo, token, rest);
+        -:  297:    }
+      124:  298:    else if (strsame(token, "CONS") || strsame(token, "CAT")) {
+       49:  299:        return interpConsNCat(varInfo, token, rest);
+        -:  300:    }
+       75:  301:    else if (isOperation(token) || isCompare(token)) {
+       55:  302:        return lisp_atom(interpOpComp(varInfo, token, rest));
+        -:  303:    }
+       20:  304:    else if (strsame(token, "LENGTH")) {
+       18:  305:        return lisp_atom(interpLength(varInfo, token, rest));
+        -:  306:    }
+        2:  307:    else if (strsame(token, "ABS")) {
+        2:  308:        return lisp_atom(interpABS(varInfo, token, rest));
+        -:  309:    }
+    #####:  310:    return NIL;
+      202:  311:}
+        -:  312:
+        8:  313:int interpABS(Var* varInfo, char* token, char* rest) {
+        8:  314:    if (!strsame(token, "ABS") || strsame(rest, "NIL")) {
+        1:  315:        return 0;
+        -:  316:    }
+        -:  317:    int val = 0;
+        7:  318:    if (isVariable(rest)) {
+        1:  319:        int index = rest[0] - 'A';
+        1:  320:        val = lisp_getval(varInfo[index].list);
+        1:  321:    }
+        6:  322:    else if (isLiteral(rest)) {
+        3:  323:        val = lisp_getval(lisp_fromstring(rest));
+        3:  324:    }
+        3:  325:    else if (rest[0] == '(' && countValidBrace(rest) == 0) {
+        3:  326:        val = lisp_getval(interpListFunc(varInfo, rest));
+        3:  327:    }
+        7:  328:    if (val < 0) {
+        7:  329:        val = 0 - val;
+        7:  330:    }
+        -:  331:    return val;
+        8:  332:}
+        -:  333:
+        5:  334:bool interpSwap(Var* varInfo, char* token, char* rest) {
+        5:  335:    if (!strsame(token, "SWAP")) {
+    #####:  336:        on_error("Not a swap function");
+    #####:  337:    }
+        5:  338:    char var1[MAXNUMTOKENS] = "", var2[MAXNUMTOKENS] = "";
+        5:  339:    strcpy(var1, rest), strcpy(var2, rest);
+        5:  340:    getFirstToken(var1, var2);
+        5:  341:    if (isVariable(var1) && isVariable(var2)) {
+        4:  342:        char v1 = var1[0], v2 = var2[0];
+        4:  343:        doSwap(varInfo, token, v1, v2);
+        -:  344:        return true;
+        -:  345:    }
+        1:  346:    return false;
+        5:  347:}
+        -:  348:
+       48:  349:lisp* interpCar(Var* varInfo, char* token, char* rest) {
+       48:  350:    if (!strsame(token, "CAR") || rest == NULL) {
+    #####:  351:        on_error("Not a car function");
+    #####:  352:    }
+       48:  353:    if (isVariable(rest)) {
+       24:  354:        int index = rest[0] - 'A';
+       24:  355:        return lisp_car(varInfo[index].list);
+        -:  356:    }
+       24:  357:    else if (strsame(rest, "NIL")) {
+        1:  358:        return NIL;
+        -:  359:    }
+       23:  360:    else if (isLiteral(rest) && countValidBrace(rest) == 0) {
+        2:  361:        char cpyRest[MAXNUMTOKENS] = "";
+        2:  362:        strcpy(cpyRest, rest);
+        2:  363:        int len = strlen(cpyRest);
+        2:  364:        substring(cpyRest, 1, len - 1);
+        2:  365:        return lisp_car(lisp_fromstring(cpyRest));
+        2:  366:    }
+        -:  367:    else {
+       21:  368:        return lisp_car(interpListFunc(varInfo, rest));
+        -:  369:    }
+       48:  370:}
+        -:  371:
+       33:  372:lisp* interpCdr(Var* varInfo, char* token, char* rest) {
+       33:  373:    if (!strsame(token, "CDR") || rest == NULL) {
+    #####:  374:        on_error("Not a cdr function");
+    #####:  375:    }
+       33:  376:    if (isVariable(rest)) {
+       26:  377:        int index = rest[0] - 'A';
+       26:  378:        return lisp_cdr(varInfo[index].list);
+        -:  379:    }
+        7:  380:    else if (strsame(rest, "NIL")) {
+        1:  381:        return NIL;
+        -:  382:    }
+        6:  383:    else if (isLiteral(rest) && countValidBrace(rest) == 0) {
+        4:  384:        char cpyRest[MAXNUMTOKENS] = "";
+        4:  385:        strcpy(cpyRest, rest);
+        4:  386:        int len = strlen(cpyRest);
+        4:  387:        substring(cpyRest, 1, len - 1);
+        4:  388:        return lisp_cdr(lisp_fromstring(cpyRest));
+        4:  389:    }
+        -:  390:    else {
+        2:  391:        return lisp_cdr(interpListFunc(varInfo, rest));
+        -:  392:    }
+       33:  393:}
+        -:  394:
+       52:  395:lisp* interpConsNCat(Var* varInfo, char* token, char* rest) {
+       52:  396:    if (!strsame(token, "CONS") && !strsame(token, "CAT")) {
+    #####:  397:        on_error("Not a cons function");
+    #####:  398:    }
+       52:  399:    char l1[MAXNUMTOKENS] = "", l2[MAXNUMTOKENS] = "";
+       52:  400:    strcpy(l1, rest), strcpy(l2, rest);
+       52:  401:    lisp* res = lisp_atom(DEFAULT);
+       52:  402:    if (rest[0] == '(') {
+        1:  403:        sepFirstInstrct(l1, l2);
+        1:  404:    }
+       51:  405:    else if (rest[0] == '\'') {
+       17:  406:        getFirstLiteral(l1);
+       17:  407:        int l1_len = strlen(l1), len = strlen(rest);
+       17:  408:        substring(l2, l1_len, len);
+       17:  409:        removeSpaceAtSides(l2);
+       17:  410:    }
+        -:  411:    else {
+       34:  412:        getFirstToken(l1, l2);
+       34:  413:        if (!isVariable(l1) && !strsame(l1, "NIL")) {
+    #####:  414:            on_error("Wrong Cons statement");
+    #####:  415:        }
+        -:  416:    }
+       52:  417:    if (strsame(token, "CONS")) {
+       49:  418:        res->car = getList(varInfo, l1);
+       49:  419:    }
+        3:  420:    else if (strsame(token, "CAT")) {
+        3:  421:        res = getList(varInfo, l1);
+        3:  422:    }
+       52:  423:    res->cdr = getList(varInfo, l2);
+       52:  424:    return res;
+       52:  425:}
+        -:  426:
+        3:  427:int interpAtom(Var* varInfo, char* token, char* rest) {
+        3:  428:    if (!strsame(token, "ATOM")) {
+    #####:  429:        on_error("Not an check atomic function");
+    #####:  430:    }
+        3:  431:    if (lisp_isatomic(getList(varInfo, rest))) {
+        1:  432:        return 1;
+        -:  433:    }
+        -:  434:    else {
+        2:  435:        return 0;
+        -:  436:    }
+        3:  437:}
+        -:  438:
+       21:  439:int interpLength(Var* varInfo, char* token, char* rest) {
+       21:  440:    if (!strsame(token, "LENGTH") || rest == NULL) {
+    #####:  441:        on_error("Not a get length function");
+    #####:  442:    }
+        -:  443:    int result = 0;
+       21:  444:    if (isVariable(rest)) {
+       12:  445:        int index = rest[0] - 'A';
+       12:  446:        result = lisp_length(varInfo[index].list);
+       12:  447:    }
+        9:  448:    else if (strsame(rest, "NIL")) {
+        -:  449:        result = 0;
+        3:  450:    }
+        6:  451:    else if (isLiteral(rest) && countValidBrace(rest) == 0) {
+        6:  452:        char cpyRest[MAXNUMTOKENS] = "";
+        6:  453:        strcpy(cpyRest, rest);
+        6:  454:        int len = strlen(cpyRest);
+        6:  455:        substring(cpyRest, 1, len - 1);
+        6:  456:        result = lisp_length(lisp_fromstring(cpyRest));
+        6:  457:    }
+        -:  458:    else {
+    #####:  459:        result = lisp_length(interpListFunc(varInfo, rest));
+        -:  460:    }
+       21:  461:    return result;
+        -:  462:}
+        -:  463:
+      104:  464:int interpOpComp(Var* varInfo, char* token, char* rest) {
+      104:  465:    if (!isOperation(token) && !isCompare(token)) {
+    #####:  466:        on_error("Not a operation/compare function");
+    #####:  467:    }
+      104:  468:    char l1[MAXNUMTOKENS] = "", l2[MAXNUMTOKENS] = "";
+      104:  469:    strcpy(l1, rest), strcpy(l2, rest);
+        -:  470:    int val1 = 0, val2 = 0;
+      104:  471:    if (rest[0] == '(') {
+       28:  472:        sepFirstInstrct(l1, l2);
+       28:  473:    }
+       76:  474:    else if (rest[0] == '\'') {
+       30:  475:        getFirstLiteral(l1);
+       30:  476:        int l1_len = strlen(l1), len = strlen(rest);
+       30:  477:        substring(l2, l1_len, len);
+       30:  478:        removeSpaceAtSides(l2);
+       30:  479:    }
+        -:  480:    else {
+       46:  481:        getFirstToken(l1, l2);
+       46:  482:        if (!strsame(l1, "NIL") && !isVariable(l1)) {
+    #####:  483:            on_error("Wrong compare / operation target");
+    #####:  484:        }
+        -:  485:    }
+      104:  486:    val1 = lisp_getval(getList(varInfo, l1));
+      104:  487:    val2 = lisp_getval(getList(varInfo, l2));
+      208:  488:    return doCompareOrOperation(token, val1, val2);
+      104:  489:}
+        -:  490:
+      109:  491:int doCompareOrOperation(char* token, int val1, int val2) {
+        -:  492:    int result = 0;
+      109:  493:    if (strsame(token, "LESS")) {
+       34:  494:        result = val1 < val2 ? 1 : 0;
+       34:  495:    }
+       75:  496:    else if (strsame(token, "GREATER")) {
+        6:  497:        result = val1 > val2 ? 1 : 0;
+        6:  498:    }
+       69:  499:    else if (strsame(token, "EQUAL")) {
+       14:  500:        result = val1 == val2 ? 1 : 0;
+       14:  501:    }
+       55:  502:    else if (strsame(token, "PLUS")) {
+       48:  503:        result = val1 + val2;
+       48:  504:    }
+        7:  505:    else if (strsame(token, "MINUS")) {
+        4:  506:        result = val1 - val2;
+        4:  507:    }
+        3:  508:    else if (strsame(token, "MUL")) {
+        1:  509:        result = val1 * val2;
+        1:  510:    }
+        2:  511:    else if (strsame(token, "DIV") && val2 != 0) {
+        1:  512:        result = val1 / val2;
+        1:  513:    }
+        1:  514:    else if (strsame(token, "MOD") && val2 != 0) {
+        1:  515:        result = val1 % val2;
+        1:  516:    }
+        -:  517:    else {
+    #####:  518:        on_error("Not a operation or compare function");
+        -:  519:    }
+      109:  520:    return result;
+        -:  521:}
+        -:  522:
+      319:  523:lisp* getList(Var* varInfo, char* token) {
+      319:  524:    if (strsame(token, "NIL")) {
+       11:  525:        return NIL;
+        -:  526:    }
+      308:  527:    else if (isVariable(token)) {
+      143:  528:        int index = token[0] - 'A';
+      143:  529:        if (varInfo[index].isSet) {
+      143:  530:            return varInfo[index].list;
+        -:  531:        }
+        -:  532:        else {
+    #####:  533:            on_error("This variable is not defined");
+        -:  534:        }
+    #####:  535:    }
+      165:  536:    else if (isLiteral(token) && countFrequency(token, '\'') % 2 == 0) {
+      102:  537:        int len = strlen(token);
+      102:  538:        char cpyToken[MAXNUMTOKENS] = "";
+      102:  539:        strcpy(cpyToken, token);
+      102:  540:        substring(cpyToken, 1, len - 1);
+      102:  541:        return lisp_fromstring(cpyToken);
+      102:  542:    }
+       63:  543:    else if ((token[0] == '(' && countValidBrace(token) == 0)) {
+       63:  544:        return interpListFunc(varInfo, token);
+        -:  545:    }
+        -:  546:    else {
+    #####:  547:        on_error("Unable to interp this token");
+        -:  548:    }
+    #####:  549:    return NIL;
+      319:  550:}
+        -:  551:
+      166:  552:void doSet(Var* varInfo, char* origin, char* target) {
+      166:  553:    if (!isVariable(origin)) {
+    #####:  554:        on_error("Cannot set a non-variable");
+    #####:  555:    }
+      166:  556:    if (!interpList(varInfo, target)) {
+    #####:  557:        on_error("Not a valid set target");
+    #####:  558:    }
+      166:  559:    int index = origin[0] - 'A';
+      166:  560:    varInfo[index].isSet = true;
+        -:  561:    /*lisp from string / NIL / Variable */
+      166:  562:    if (isVariable(target)) {
+       43:  563:        int target_idx = target[0] - 'A';
+       43:  564:        varInfo[index] = varInfo[target_idx];
+       43:  565:    }
+      123:  566:    else if (strsame(target, "NIL")) {
+    #####:  567:        varInfo[index].list = NIL;
+    #####:  568:    }
+      123:  569:    else if (isLiteral(target)) {
+       23:  570:        int len = strlen(target);
+       23:  571:        substring(target, 1, len - 1);
+       23:  572:        if (countValidBrace(target) != 0) {
+    #####:  573:            on_error("Wrong lisp literal");
+    #####:  574:        }
+       23:  575:        varInfo[index].list = lisp_fromstring(target);
+       23:  576:    }
+      100:  577:    else if (target[0] == '(' && countValidBrace(target) == 0) {
+      100:  578:        varInfo[index].list = interpListFunc(varInfo, target);
+      100:  579:    }
+      166:  580:}
+        -:  581:
+        4:  582:void doReset(Var* varInfo, char* target) {
+        4:  583:    if (!isVariable(target)) {
+        -:  584:        return;
+        -:  585:    }
+        4:  586:    int index = target[0] - 'A';
+        4:  587:    varInfo[index].isSet = false;
+        4:  588:    varInfo[index].list = NIL;
+        4:  589:}
+        -:  590:
+        6:  591:void doSwap(Var* varInfo, char* instrct, char var1, char var2) {
+        6:  592:    if (!strsame(instrct, "SWAP")) {
+    #####:  593:        on_error("Not a swap function");
+    #####:  594:    }
+        6:  595:    int idx1 = var1 - 'A', idx2 = var2 - 'A';
+        6:  596:    bool b_tmp = varInfo[idx1].isSet;
+        6:  597:    lisp* tmp = varInfo[idx1].list;
+        6:  598:    varInfo[idx1].isSet = varInfo[idx2].isSet;
+        6:  599:    varInfo[idx1].list = varInfo[idx2].list;
+        6:  600:    varInfo[idx2].isSet = b_tmp;
+        6:  601:    varInfo[idx2].list = tmp;
+        6:  602:}
+        -:  603:
+        -:  604:#else
+        -:  605:bool parseInstrcts(char* instrcts) {
+        -:  606:    if (!instrcts) {
+        -:  607:        on_error("Empty Instrcts Statement");
+        -:  608:    }
+        -:  609:    char instrct[MAXNUMTOKENS] = "", rest[MAXNUMTOKENS] = "";
+        -:  610:    strcpy(instrct, instrcts);
+        -:  611:    sepFirstInstrct(instrct, rest);
+        -:  612:    if (!parseInstrct(instrct)) {
+        -:  613:        return false;
+        -:  614:    }
+        -:  615:    if (strsame(rest, "")) {
+        -:  616:        return true;
+        -:  617:    }
+        -:  618:    return parseInstrcts(rest);
+        -:  619:}
+        -:  620:
+        -:  621:bool parseInstrct(char* instrct) {
+        -:  622:    if (instrct[0] != '(' && instrct[(int)strlen(instrct) - 1] != ')') {
+        -:  623:        on_error("Not a valid instrct statement");
+        -:  624:    }
+        -:  625:    unParens(instrct), removeSpaceAtSides(instrct);
+        -:  626:    char firstToken[MAXNUMTOKENS] = "", rest[MAXNUMTOKENS] = "";
+        -:  627:    strcpy(firstToken, instrct), strcpy(rest, instrct);
+        -:  628:    getFirstToken(firstToken, rest);
+        -:  629:    if (strsame(firstToken, "SET")) {
+        -:  630:        return parseSetFunc(firstToken, rest);
+        -:  631:    }
+        -:  632:    else if (strsame(firstToken, "PRINT")) {
+        -:  633:        return parsePrintFunc(firstToken, rest);
+        -:  634:    }
+        -:  635:    else if (isCondition(firstToken)) {
+        -:  636:        return parseConditionInstrcts(firstToken, rest);
+        -:  637:    }
+        -:  638:    else if (strsame(firstToken, "RESET")) {
+        -:  639:        return parseResetFunc(firstToken, rest);
+        -:  640:    }
+        -:  641:    else if (strsame(firstToken, "SWAP")) {
+        -:  642:        return parseSwapFunc(firstToken, rest);
+        -:  643:    }
+        -:  644:    else {
+        -:  645:        printf("Wrong instrct statement :%s\n", instrct);
+        -:  646:    }
+        -:  647:    return false;
+        -:  648:}
+        -:  649:
+        -:  650:bool parseSetFunc(char* instrct_token, char* rest) {
+        -:  651:    if (!strsame(instrct_token, "SET")) {
+        -:  652:        on_error("Not a SET function");
+        -:  653:    }
+        -:  654:    char nextToken[MAXNUMTOKENS] = "";
+        -:  655:    getFirstToken(nextToken, rest);
+        -:  656:    /*check if has variable*/
+        -:  657:    if (!isVariable(nextToken)) {
+        -:  658:        on_error("Require a variable for SET function");
+        -:  659:    }
+        -:  660:    if (parseList(rest)) {
+        -:  661:        return true;
+        -:  662:    }
+        -:  663:    else {
+        -:  664:        on_error("Wrong SET Function");
+        -:  665:    }
+        -:  666:    return false;
+        -:  667:}
+        -:  668:
+        -:  669:bool parsePrintFunc(char* instrct_token, char* rest) {
+        -:  670:    /*Print var / const string / a list*/
+        -:  671:    if (!strsame(instrct_token, "PRINT")) {
+        -:  672:        on_error("Not a Print Function");
+        -:  673:    }
+        -:  674:    /*Include var/list*/
+        -:  675:    if (parseList(rest)) {
+        -:  676:        return true;
+        -:  677:    }
+        -:  678:    if (isConstString(rest)) {
+        -:  679:        return true;
+        -:  680:    }
+        -:  681:    else {
+        -:  682:        fprintf(stderr, "Wrong Print target:%s\n", rest);
+        -:  683:        exit(EXIT_FAILURE);
+        -:  684:    }
+        -:  685:    return false;
+        -:  686:}
+        -:  687:
+        -:  688:bool parseListFunc(char* instrct_token, char* rest) {
+        -:  689:    if (strsame(instrct_token, "CAR") || strsame(instrct_token, "CDR")) {
+        -:  690:        return parseList(rest);
+        -:  691:    }
+        -:  692:    else if (strsame(instrct_token, "LENGTH") || strsame(instrct_token, "ABS")) {
+        -:  693:        return parseList(rest);
+        -:  694:    }
+        -:  695:    else if (isOperation(instrct_token) || isCompare(instrct_token)) {
+        -:  696:        if (parseTwoList(rest)) {
+        -:  697:            return true;
+        -:  698:        }
+        -:  699:    }
+        -:  700:    else if (strsame(instrct_token, "CONS") || strsame(instrct_token, "CAT")) {
+        -:  701:        if (parseTwoList(rest)) {
+        -:  702:            return true;
+        -:  703:        }
+        -:  704:    }
+        -:  705:    else {
+        -:  706:        on_error("Wrong LISTFUNC statement");
+        -:  707:    }
+        -:  708:    return false;
+        -:  709:}
+        -:  710:
+        -:  711:bool parseConditionInstrcts(char* type, char* instrcts) {
+        -:  712:    if (!isCondition(type)) {
+        -:  713:        on_error("Wrong if/while statement");
+        -:  714:    }
+        -:  715:    /*First Statement must be a condtional statement*/
+        -:  716:    char cond_instrct[MAXNUMTOKENS] = "", rest[MAXNUMTOKENS] = "";
+        -:  717:    strcpy(cond_instrct, instrcts), strcpy(rest, instrcts);
+        -:  718:    sepFirstInstrct(cond_instrct, rest);
+        -:  719:    if (parseCondition(cond_instrct)) {
+        -:  720:        char instrcts1[MAXNUMTOKENS] = "", instrcts2[MAXNUMTOKENS] = "";
+        -:  721:        strcpy(instrcts1, rest), strcpy(instrcts2, rest);
+        -:  722:        if (strsame(type, "IF")) {
+        -:  723:            sepFirstInstrct(instrcts1, instrcts2);
+        -:  724:            unParens(instrcts1), removeSpaceAtSides(instrcts1);
+        -:  725:            unParens(instrcts2), removeSpaceAtSides(instrcts2);
+        -:  726:            return parseInstrcts(instrcts1) && parseInstrcts(instrcts2);
+        -:  727:        }
+        -:  728:        else if (strsame(type, "WHILE")) {
+        -:  729:            unParens(instrcts1), removeSpaceAtSides(instrcts1);
+        -:  730:            return parseInstrcts(instrcts1);
+        -:  731:        }
+        -:  732:    }
+        -:  733:    else {
+        -:  734:        on_error("Wrong Condition statement");
+        -:  735:    }
+        -:  736:    return false;
+        -:  737:}
+        -:  738:
+        -:  739:bool parseCondition(char* cpyInstrct) {
+        -:  740:    char instrct[MAXNUMTOKENS] = "";
+        -:  741:    strcpy(instrct, cpyInstrct);
+        -:  742:    unParens(instrct), removeSpaceAtSides(instrct);
+        -:  743:    char firstToken[MAXNUMTOKENS] = "", rest[MAXNUMTOKENS] = "";
+        -:  744:    strcpy(firstToken, instrct), strcpy(rest, instrct);
+        -:  745:    getFirstToken(firstToken, rest);
+        -:  746:    if (strsame(firstToken, "ATOM")) {
+        -:  747:        return parseList(rest);
+        -:  748:    }
+        -:  749:    if (!isCompare(firstToken)) {
+        -:  750:        on_error("Wrong condtional statement");
+        -:  751:    }
+        -:  752:    return parseTwoList(rest);
+        -:  753:}
+        -:  754:
+        -:  755:bool parseList(char* rest) {
+        -:  756:    if (rest[0] == '(' && rest[(int)strlen(rest) - 1] == ')') {
+        -:  757:        unParens(rest), removeSpaceAtSides(rest);
+        -:  758:        char list[MAXNUMTOKENS] = "", instrct_token[MAXNUMTOKENS] = "";
+        -:  759:        strcpy(list, rest), strcpy(instrct_token, rest);
+        -:  760:        getFirstToken(instrct_token, list);
+        -:  761:        if (isLisp(instrct_token) || isOperation(instrct_token) || isCompare(instrct_token)) {
+        -:  762:            return parseListFunc(instrct_token, list);
+        -:  763:        }
+        -:  764:        if (strsame(instrct_token, "CAT") || strsame(instrct_token, "LENGTH") || strsame(instrct_token, "ABS")) {
+        -:  765:            return parseListFunc(instrct_token, list);
+        -:  766:        }
+        -:  767:    }
+        -:  768:    else if (strsame(rest, "NIL") || isLiteral(rest) || isVariable(rest)) {
+        -:  769:        return true;
+        -:  770:    }
+        -:  771:    return false;
+        -:  772:}
+        -:  773:
+        -:  774:bool parseTwoList(char* rest) {
+        -:  775:    char list1[MAXNUMTOKENS] = "", list2[MAXNUMTOKENS] = "";
+        -:  776:    strcpy(list1, rest), strcpy(list2, rest);
+        -:  777:    getFirstToken(list1, list2);
+        -:  778:    if (isVariable(list1) || strsame(list1, "NIL")) {
+        -:  779:        return parseList(list2);
+        -:  780:    }
+        -:  781:    else if (rest[0] == '\'' || rest[0] == '(') {
+        -:  782:        char l1[MAXNUMTOKENS] = "", l2[MAXNUMTOKENS] = "";
+        -:  783:        strcpy(l1, rest), strcpy(l2, rest);
+        -:  784:        if (rest[0] == '\'') {
+        -:  785:            getFirstLiteral(l1);
+        -:  786:            int len = strlen(rest);
+        -:  787:            int l1_len = strlen(l1);
+        -:  788:            substring(l2, l1_len, len);
+        -:  789:            removeSpaceAtSides(l2);
+        -:  790:        }
+        -:  791:        else {
+        -:  792:            sepFirstInstrct(l1, l2);
+        -:  793:        }
+        -:  794:        return parseList(l1) && parseList(l2);
+        -:  795:    }
+        -:  796:    return false;
+        -:  797:}
+        -:  798:
+        -:  799:bool parseResetFunc(char* instrct_token, char* rest) {
+        -:  800:    if (!strsame(instrct_token, "RESET")) {
+        -:  801:        on_error("NOT a reset function");
+        -:  802:    }
+        -:  803:    if (!isVariable(rest)) {
+        -:  804:        return false;
+        -:  805:    }
+        -:  806:    return true;
+        -:  807:}
+        -:  808:
+        -:  809:bool parseSwapFunc(char* instrct_token, char* rest) {
+        -:  810:    if (!strsame(instrct_token, "SWAP")) {
+        -:  811:        on_error("NOT a SWAP function");
+        -:  812:    }
+        -:  813:    char first[MAXNUMTOKENS] = "", second[MAXNUMTOKENS] = "";
+        -:  814:    strcpy(first, rest), strcpy(second, rest);
+        -:  815:    getFirstToken(first, second);
+        -:  816:    if (isVariable(first) && isVariable(second)) {
+        -:  817:        return true;
+        -:  818:    }
+        -:  819:    return false;
+        -:  820:}
+        -:  821:
+        -:  822:#endif
+        -:  823:
+      316:  824:void sepFirstInstrct(char* instrct, char* rest) {
+      316:  825:    if (instrct == NULL || rest == NULL) {
+        -:  826:        return;
+        -:  827:    }
+      316:  828:    removeSpaceAtSides(instrct);
+      316:  829:    if (instrct[0] != '(') {
+        -:  830:        return;
+        -:  831:    }
+      316:  832:    strcpy(rest, instrct);
+      316:  833:    int len = strlen(instrct);
+     7429:  834:    for (int i = 0; i < len; i++) {
+     7113:  835:        if (instrct[i] == ')') {
+      692:  836:            substring(instrct, 0, i + 1);
+      692:  837:            if (countValidBrace(instrct) == 0) {
+      316:  838:                int b_len = strlen(instrct);
+      316:  839:                substring(rest, b_len, len);
+      316:  840:                removeSpaceAtSides(rest);
+        -:  841:                i = len;
+      316:  842:            }
+        -:  843:            else {
+      376:  844:                strcpy(instrct, rest);
+        -:  845:            }
+        -:  846:        }
+        -:  847:    }
+      316:  848:}
+        -:  849:
+       29:  850:bool isConstString(char* str) {
+       29:  851:    int len = strlen(str);
+       29:  852:    if (len == 0) {
+        1:  853:        return false;
+        -:  854:    }
+       28:  855:    if (str[0] == DOUBLEQUOTE && str[len - 1] == DOUBLEQUOTE) {
+       16:  856:        return countFrequency(str, '"') == DOUBLE;
+        -:  857:    }
+       12:  858:    return false;
+       29:  859:}
+        -:  860:
+      156:  861:void separateBraces(char* str) {
+      156:  862:    char tmp[MAXNUMTOKENS] = "";
+      156:  863:    int len = strlen(str);
+     2995:  864:    for (int i = 0; i < len; i++) {
+     2839:  865:        strncat(tmp, &str[i], 1);
+     2839:  866:        if (i < len - 1 && isBrace(str[i]) && isBrace(str[i + 1])) {
+      124:  867:            strcat(tmp, SPACE);
+      124:  868:        }
+        -:  869:    }
+      156:  870:    strcpy(str, tmp);
+      156:  871:}
+        -:  872:
+     3104:  873:bool isBrace(char ch) {
+     3104:  874:    if (ch == '(' || ch == ')') {
+      543:  875:        return true;
+        -:  876:    }
+     2561:  877:    return false;
+     3104:  878:}
+        -:  879:
+        4:  880:bool isCondition(char* str) {
+        4:  881:    if (strsame(str, "IF") || strsame(str, "WHILE")) {
+        2:  882:        return true;
+        -:  883:    }
+        2:  884:    return false;
+        4:  885:}
+        -:  886:
+       82:  887:bool isCompare(char* str) {
+       82:  888:    if (strsame(str, "LESS") || strsame(str, "GREATER") || strsame(str, "EQUAL")) {
+       58:  889:        return true;
+        -:  890:    }
+       24:  891:    return false;
+       82:  892:}
+        -:  893:
+      185:  894:bool isOperation(char* str) {
+      185:  895:    if (strsame(str, "PLUS") || strsame(str, "MINUS")) {
+       99:  896:        return true;
+        -:  897:    }
+       86:  898:    else if (strsame(str, "MUL") || strsame(str, "MOD") || strsame(str, "DIV")) {
+        9:  899:        return true;
+        -:  900:    }
+       77:  901:    return false;
+      185:  902:}
+        -:  903:
+      667:  904:bool isLiteral(char* str) {
+      667:  905:    int len = strlen(str);
+      667:  906:    if (str[0] == SINGLEQUOTE && str[len - 1] == SINGLEQUOTE) {
+      190:  907:        return true;
+        -:  908:    }
+      477:  909:    return false;
+      667:  910:}
+        -:  911:
+      120:  912:int countFrequency(char* str, char ch) {
+      120:  913:    int len = strlen(str);
+        -:  914:    int count = 0;
+      841:  915:    for (int i = 0; i < len; i++) {
+      721:  916:        if (str[i] == ch) {
+      240:  917:            count++;
+      240:  918:        }
+        -:  919:    }
+      120:  920:    return count;
+        -:  921:}
+        -:  922:
+     1153:  923:int countValidBrace(char* str) {
+     1153:  924:    int len = strlen(str);
+     1153:  925:    if (len == 0) {
+        1:  926:        return 0;
+        -:  927:    }
+    31580:  928:    int singleQ = 0, doubleQ = 0, countValid = 0;
+        -:  929:    bool inDQ = false;
+    31580:  930:    for (int i = 0; i < len; i++) {
+    30428:  931:        if (str[i] == SINGLEQUOTE && !inDQ) {
+     1228:  932:            singleQ++;
+     1228:  933:        }
+    29200:  934:        else if (str[i] == DOUBLEQUOTE) {
+      372:  935:            inDQ = inDQ == true ? false : true;
+      372:  936:            doubleQ++;
+      372:  937:        }
+    30428:  938:        if (singleQ % 2 == 0 && doubleQ % 2 == 0) {
+    25258:  939:            if (str[i] == '(') {
+     3061:  940:                countValid++;
+     3061:  941:            }
+    22197:  942:            else if (str[i] == ')') {
+     2450:  943:                countValid--;
+     2450:  944:            }
+        -:  945:        }
+        -:  946:    }
+        -:  947:    return countValid;
+     1153:  948:}
+        -:  949:
+     1368:  950:bool isVariable(char* str) {
+     1368:  951:    int len = strlen(str);
+     1368:  952:    if (len != 1) {
+      564:  953:        return false;
+        -:  954:    }
+      804:  955:    if (!isupper(str[0])) {
+        1:  956:        return false;
+        -:  957:    }
+      803:  958:    return true;
+     1368:  959:}
+        -:  960:
+        6:  961:bool isLisp(char* str) {
+        -:  962:
+        6:  963:    if (strsame(str, "CAR") || strsame(str, "CDR") || strsame(str, "CONS")) {
+        3:  964:        return true;
+        -:  965:    }
+        3:  966:    return false;
+        6:  967:}
+        -:  968:
+      524:  969:void unParens(char* str) {
+      524:  970:    if (!str) {
+        -:  971:        return;
+        -:  972:    }
+      524:  973:    int len = strlen(str);
+      524:  974:    int from = str[0] == '(' ? 1 : 0;
+      524:  975:    int end = str[len - 1] == ')' ? len - 1 : len;
+      524:  976:    substring(str, from, end);
+      524:  977:    if (str[0] == '(' || str[strlen(str) - 1] == ')') {
+        4:  978:        unParens(str);
+        4:  979:    }
+      524:  980:}
+        -:  981:
+      739:  982:void getFirstToken(char* firstToken, char* rest) {
+      739:  983:    if (!firstToken || !rest) {
+        -:  984:        return;
+        -:  985:    }
+      739:  986:    strcpy(firstToken, rest);
+      739:  987:    int len = strlen(firstToken);
+        -:  988:    int i = 0, firstSpaceIndex = 0, countSpace = 0;
+    11558:  989:    for (int i = 0; i < len; i++) {
+    10819:  990:        if (firstToken[i] == ' ') {
+     2396:  991:            countSpace++;
+     2396:  992:        }
+        -:  993:    }
+      739:  994:    if (countSpace == 0) {
+        2:  995:        strcpy(rest, "");
+        2:  996:        return;
+        -:  997:    }
+        -:  998:    bool findSpace = false;
+     3537:  999:    while (i < len && !findSpace) {
+     2800: 1000:        if (firstToken[i] == ' ') {
+        -: 1001:            findSpace = true;
+        -: 1002:            firstSpaceIndex = i;
+      737: 1003:        }
+     2800: 1004:        i++;
+        -: 1005:    }
+      737: 1006:    substring(firstToken, 0, firstSpaceIndex);
+      737: 1007:    int ft_len = strlen(firstToken);
+      737: 1008:    substring(rest, ft_len, len);
+      737: 1009:    removeSpaceAtSides(rest);
+     1476: 1010:    }
+        -: 1011:
+        -: 1012:/*Remove space at head and tail*/
+     3278: 1013:void removeSpaceAtSides(char* str) {
+     3278: 1014:    int len = strlen(str);
+     3278: 1015:    if (len == 0) {
+       61: 1016:        return;
+        -: 1017:    }
+     3217: 1018:    if (str[0] == ' ') {
+     1119: 1019:        substring(str, 1, len);
+     1119: 1020:        removeSpaceAtSides(str);
+     1119: 1021:    }
+     2098: 1022:    else if (str[len - 1] == ' ') {
+      224: 1023:        substring(str, 0, len - 1);
+      224: 1024:        removeSpaceAtSides(str);
+      224: 1025:    }
+     3278: 1026:}
+        -: 1027:
+     4627: 1028:void substring(char* buffer, int from, int end) {
+     4627: 1029:    int len = (int)strlen(buffer);
+     4627: 1030:    if (from > end || len == 0) {
+    #####: 1031:        return;
+        -: 1032:    }
+     4627: 1033:    char tmp[MAXNUMTOKENS] = "";
+        -: 1034:    int start = 0;
+   117375: 1035:    for (int i = from; i < end;i++) {
+   112748: 1036:        char cur = buffer[i];
+   112748: 1037:        tmp[start++] = cur;
+        -: 1038:    }
+     4627: 1039:    strcpy(buffer, tmp);
+     4627: 1040:}
+        -: 1041:
+       48: 1042:void getFirstLiteral(char* str) {
+       48: 1043:    if (!str) {
+        -: 1044:        return;
+        -: 1045:    }
+       48: 1046:    int len = strlen(str);
+      215: 1047:    bool hasStart = false;
+      215: 1048:    int start = -1, end = -1, count = 0;
+      215: 1049:    for (int i = 0; i < len;i++) {
+      167: 1050:        if (str[i] == '\'') {
+       96: 1051:            count++;
+       96: 1052:            if (hasStart) {
+        -: 1053:                end = i;
+        -: 1054:                i = len;
+       48: 1055:            }
+        -: 1056:            else {
+        -: 1057:                start = i;
+        -: 1058:                hasStart = true;
+        -: 1059:            }
+        -: 1060:        }
+        -: 1061:    }
+       48: 1062:    if (count != DOUBLE) {
+    #####: 1063:        return;
+        -: 1064:    }
+       48: 1065:    if (start < 0 || end < 0) {
+    #####: 1066:        return;
+        -: 1067:    }
+       48: 1068:    substring(str, start, end + 1);
+       96: 1069:}
+        -: 1070:
+        1: 1071:void readMultipleFiles() {
+        1: 1072:    Program* pTest1 = READFILE("test1.ncl");
+        1: 1073:    Program* pTest2 = READFILE("test2.ncl");
+        1: 1074:    Program* pTest3 = READFILE("test3.ncl");
+        1: 1075:    Program* pTest4 = READFILE("test4.ncl");
+        1: 1076:    Program* pTest5 = READFILE("testl.ncl");
+        1: 1077:    Program* pTest6 = READFILE("simploop.ncl");
+        1: 1078:    Program* pTest7 = READFILE("printset.ncl");
+        1: 1079:    Program* pTest8 = READFILE("fib.ncl");
+        1: 1080:    Program* pTest9 = READFILE("basicprint.ncl");
+        1: 1081:    Program* pTest10 = READFILE("triv.ncl");
+        1: 1082:    Program* pTest11 = READFILE("demo1.ncl");
+        1: 1083:    Program* pTest12 = READFILE("demo2.ncl");
+        1: 1084:    Program* pTest13 = READFILE("demo3.ncl");
+        1: 1085:    assert(startProgram(pTest1));
+        1: 1086:    assert(startProgram(pTest2));
+        1: 1087:    assert(startProgram(pTest3));
+        1: 1088:    assert(startProgram(pTest4));
+        1: 1089:    assert(startProgram(pTest5));
+        1: 1090:    assert(startProgram(pTest6));
+        1: 1091:    assert(startProgram(pTest7));
+        1: 1092:    assert(startProgram(pTest8));
+        1: 1093:    assert(startProgram(pTest9));
+        1: 1094:    assert(startProgram(pTest10));
+        1: 1095:    assert(startProgram(pTest11));
+        1: 1096:    assert(startProgram(pTest12));
+        1: 1097:    assert(startProgram(pTest13));
+        1: 1098:    free(pTest1);
+        1: 1099:    free(pTest2);
+        1: 1100:    free(pTest3);
+        1: 1101:    free(pTest4);
+        1: 1102:    free(pTest5);
+        1: 1103:    free(pTest6);
+        1: 1104:    free(pTest7);
+        1: 1105:    free(pTest8);
+        1: 1106:    free(pTest9);
+        1: 1107:    free(pTest10);
+        1: 1108:    free(pTest11);
+        1: 1109:    free(pTest12);
+        1: 1110:    free(pTest13);
+        1: 1111:}
+        -: 1112:
+    #####: 1113:void testReadFile() {
+        -: 1114:    /*Below is the test for readfile*/
+    #####: 1115:    printf("\n---TEST CASE 1---\n");
+    #####: 1116:    Program* pTest1 = READFILE("test1.ncl");
+    #####: 1117:    char buffer[MAXNUMTOKENS] = "";
+    #####: 1118:    assert(pTest1->firstLine == 1);
+    #####: 1119:    assert(pTest1->lastLine == 12);
+    #####: 1120:    assert(strsame(pTest1->wds[3], "(WHILE (GREATER A '2') ("));
+    #####: 1121:    assert(strsame(pTest1->wds[8], "(SET A (MINUS A '1') )"));
+    #####: 1122:    assert(strsame(pTest1->wds[11], ") )"));
+    #####: 1123:    assert(startProgram(pTest1));
+    #####: 1124:    strcpy(buffer, pTest1->str);
+    #####: 1125:    unParens(buffer);
+        -: 1126:#ifdef INTERP
+    #####: 1127:    Var testInfo[NUMALPH] = { {false,NIL} };
+        -: 1128:#else 
+        -: 1129:    char rest[MAXNUMTOKENS] = "";
+        -: 1130:    assert(parseInstrcts(buffer));
+        -: 1131:    assert(parseInstrcts(pTest1->wds[10]));
+        -: 1132:    assert(parseInstrct(pTest1->wds[4]));
+        -: 1133:    assert(parseInstrct(pTest1->wds[5]));
+        -: 1134:    assert(parseInstrct(pTest1->wds[7]));
+        -: 1135:    strcpy(buffer, pTest1->wds[10]);
+        -: 1136:    unParens(buffer), removeSpaceAtSides(buffer);
+        -: 1137:    strcpy(rest, buffer);
+        -: 1138:    getFirstToken(buffer, rest);
+        -: 1139:    assert(parseConditionInstrcts(buffer, rest));
+        -: 1140:#endif
+    #####: 1141:    printf("\n---TEST CASE 2---\n");
+    #####: 1142:    Program* pTest2 = READFILE("test2.ncl");
+    #####: 1143:    assert(pTest2->firstLine == 4);
+    #####: 1144:    assert(pTest2->lastLine == 13);
+    #####: 1145:    assert(startProgram(pTest2));
+    #####: 1146:    strcpy(buffer, pTest2->str);
+    #####: 1147:    unParens(buffer), removeSpaceAtSides(buffer);
+        -: 1148:#ifdef INTERP
+    #####: 1149:    for (int i = 0; i < NUMALPH; i++) {
+    #####: 1150:        testInfo[i].isSet = false;
+    #####: 1151:        testInfo[i].list = NIL;
+        -: 1152:    }
+    #####: 1153:    assert(interpInstrcts(testInfo, buffer));
+        -: 1154:#else
+        -: 1155:    assert(parseInstrcts(buffer));
+        -: 1156:    sepFirstInstrct(buffer, rest);
+        -: 1157:    strsame(buffer, "(SET A (LENGTH NIL))");
+        -: 1158:    strcpy(buffer, rest);
+        -: 1159:    sepFirstInstrct(buffer, rest);
+        -: 1160:    strsame(buffer, ("SET B '(-1)'"));
+        -: 1161:    strcpy(buffer, rest);
+        -: 1162:    unParens(buffer), removeSpaceAtSides(buffer);
+        -: 1163:    strcpy(rest, buffer);
+        -: 1164:    getFirstToken(buffer, rest);
+        -: 1165:    assert(parseConditionInstrcts("WHILE", rest));
+        -: 1166:#endif
+    #####: 1167:    free(pTest1);
+    #####: 1168:    free(pTest2);
+    #####: 1169:}
+        -: 1170:
+        1: 1171:void tests() {
+        -: 1172:    /*Comment these two function as they will interp PrintFunction will cause confusion in output*/
+        -: 1173:
+        -: 1174:    /* ReadMultipleFiles() helps to build code coverage report
+        -: 1175:    while testReadfile() helps to check details of each input file*/
+        -: 1176:
+        1: 1177:    readMultipleFiles();
+        -: 1178:    // testReadFile();
+        1: 1179:    char buffer[MAXNUMTOKENS] = "", rest[MAXNUMTOKENS] = "";
+        -: 1180:#ifdef INTERP
+        -: 1181:    /*Below IS TEST OF INTERP PRINT FUNCTION*/
+        1: 1182:    Var testInfo[NUMALPH] = { {false,NIL} };
+        1: 1183:    assert(interpInstrcts(testInfo, "(SET A '5') (SET X (LENGTH A) )"));
+        1: 1184:    assert(interpInstrcts(testInfo, "(SET H (CONS NIL '(1 2)') ) (SET T (LESS H '10') )"));
+        1: 1185:    strcpy(buffer, "A (CDR B)");
+        1: 1186:    assert(interpSetFunc(testInfo, "SET", buffer));
+        1: 1187:    strcpy(buffer, "C (CONS A (CDR (CAR B) ) )");
+        1: 1188:    assert(interpSetFunc(testInfo, "SET", buffer));
+        1: 1189:    strcpy(buffer, "D (EQUAL A (CDR (CDR '(1 2 -3)') ) )");
+        1: 1190:    assert(interpSetFunc(testInfo, "SET", buffer));
+        -: 1191:    // assert(interpPrintFunc(testInfo, "PRINT", "A"));
+        -: 1192:    // assert(interpPrintFunc(testInfo, "PRINT", "\"Testing interp PrintFunc\""));
+        -: 1193:    // assert(interpPrintFunc(testInfo, "PRINT", "(CDR B)"));
+        1: 1194:    assert(interpListFunc(testInfo, "(CDR '(2 3 -8)')"));
+        1: 1195:    assert(interpListFunc(testInfo, "(CONS NIL (CAR H) )"));
+        1: 1196:    assert(interpListFunc(testInfo, "(LENGTH '(2 3 -8)')"));
+        1: 1197:    assert(interpList(testInfo, "NIL"));
+        1: 1198:    lisp* l1 = interpCar(testInfo, "CAR", "'(2 8 (9 7))'");
+        1: 1199:    assert(lisp_getval(l1) == 2);
+        1: 1200:    assert(lisp_length(l1) == 0);
+        1: 1201:    lisp* l2 = interpCdr(testInfo, "CDR", "'(2 8 (9 7) )'");
+        1: 1202:    assert(lisp_getval(l2) == 0);
+        1: 1203:    assert(lisp_length(l2) == 2);
+        1: 1204:    assert(!interpCdr(testInfo, "CDR", "NIL"));
+        1: 1205:    lisp* l3 = interpConsNCat(testInfo, "CONS", "C NIL");
+        1: 1206:    assert(lisp_getval(l3) == 0);
+        1: 1207:    assert(lisp_length(l3) == 1);
+        1: 1208:    assert(interpLength(testInfo, "LENGTH", "H") == 3);
+        1: 1209:    assert(interpLength(testInfo, "LENGTH", "'(2 -3 (2 6) )'") == 3);
+        1: 1210:    assert(interpLength(testInfo, "LENGTH", "'-283'") == 0);
+        1: 1211:    assert(interpOpComp(testInfo, "MINUS", "(CAR H) (LENGTH H)"));
+        1: 1212:    assert(interpOpComp(testInfo, "PLUS", "(CAR NIL) (LENGTH '(2 -9)')") == 2);
+        1: 1213:    assert(interpOpComp(testInfo, "LESS", "'5' (LENGTH A)") == 0);
+        1: 1214:    assert(doCompareOrOperation("EQUAL", 5, 5) == 1);
+        1: 1215:    assert(doCompareOrOperation("EQUAL", -5, 5) == 0);
+        1: 1216:    assert(doCompareOrOperation("GREATER", -5, 5) == 0);
+        1: 1217:    assert(doCompareOrOperation("MINUS", -5, 5) == -10);
+        1: 1218:    assert(doCompareOrOperation("PLUS", -5, 5) == 0);
+        1: 1219:    lisp* l4 = getList(testInfo, "NIL");
+        1: 1220:    assert(lisp_getval(l4) == 0);
+        1: 1221:    assert(lisp_length(l4) == 0);
+        1: 1222:    lisp* l5 = getList(testInfo, "'(1 -1 -2)'");
+        1: 1223:    assert(lisp_getval(l5) == 0);
+        1: 1224:    assert(lisp_length(l5) == 3);
+        1: 1225:    lisp* l6 = getList(testInfo, "(CONS A H)");
+        1: 1226:    assert(lisp_getval(l6) == 0);
+        1: 1227:    assert(lisp_length(l6) == 4);
+        1: 1228:    assert(!lisp_isatomic(l6));
+        1: 1229:    lisp* l7 = getList(testInfo, "'-100'");
+        1: 1230:    assert(lisp_getval(l7) == -100);
+        1: 1231:    assert(lisp_length(l7) == 0);
+        1: 1232:    assert(lisp_isatomic(l7));
+        1: 1233:    lisp* l8 = interpConsNCat(testInfo, "CAT", "'(1)' '(2)'");
+        1: 1234:    lisp_tostring(l8, buffer);
+        1: 1235:    assert(strsame(buffer, "(1 2)"));
+        1: 1236:    lisp* l9 = interpConsNCat(testInfo, "CAT", "(CDR H) '(2 5 -5 1)'");
+        1: 1237:    lisp_tostring(l9, buffer);
+        1: 1238:    assert(strsame(buffer, "(1 2 5 -5 1)"));
+        1: 1239:    assert(interpABS(testInfo, "ABS", "'-101'") == 101);
+        1: 1240:    assert(interpABS(testInfo, "ABS", "NIL") == 0);
+        1: 1241:    testInfo['Z' - 'A'].isSet = true;
+        1: 1242:    testInfo['Z' - 'A'].list = lisp_atom(-8);
+        1: 1243:    testInfo['U' - 'A'].isSet = true;
+        1: 1244:    testInfo['U' - 'A'].list = lisp_atom(3);
+        1: 1245:    assert(interpABS(testInfo, "ABS", "Z") == 8);
+        1: 1246:    assert(interpABS(testInfo, "ABS", "(CAR '(-7 2)')") == 7);
+        1: 1247:    assert(interpABS(testInfo, "ABS", "(CAR (CDR '(7 -2)') )") == 2);
+        1: 1248:    assert(interpABS(testInfo, "ABS", "(CAR (CAR (CONS '(-7 2)' U)))") == 7);
+        1: 1249:    testInfo['H' - 'A'].list = lisp_atom(9);
+        1: 1250:    testInfo['H' - 'A'].isSet = true;
+        -: 1251:    /*Testing Swap Function*/
+        1: 1252:    assert(lisp_getval(testInfo['H' - 'A'].list) == 9);
+        1: 1253:    assert(lisp_getval(testInfo['Z' - 'A'].list) == -8);
+        1: 1254:    assert(interpSwap(testInfo, "SWAP", "Z H"));
+        1: 1255:    assert(lisp_getval(testInfo['H' - 'A'].list) == -8);
+        1: 1256:    assert(lisp_getval(testInfo['Z' - 'A'].list) == 9);
+        1: 1257:    testInfo['P' - 'A'].list = lisp_atom(-88);
+        1: 1258:    testInfo['P' - 'A'].isSet = true;
+        1: 1259:    assert(interpSwap(testInfo, "SWAP", "P H"));
+        1: 1260:    assert(!interpSwap(testInfo, "SWAP", "P HI"));
+        1: 1261:    assert(lisp_getval(testInfo['H' - 'A'].list) == -88);
+        1: 1262:    assert(lisp_getval(testInfo['P' - 'A'].list) == -8);
+        1: 1263:    doSwap(testInfo, "SWAP", 'H', 'P');
+        1: 1264:    assert(lisp_getval(testInfo['H' - 'A'].list) == -8);
+        1: 1265:    assert(lisp_getval(testInfo['P' - 'A'].list) == -88);
+        -: 1266:    /*B is not set, so P will swap to default status */
+        1: 1267:    testInfo['B' - 'A'].list = NIL;
+        1: 1268:    testInfo['B' - 'A'].isSet = false;
+        1: 1269:    doSwap(testInfo, "SWAP", 'B', 'P');
+        1: 1270:    assert(lisp_getval(testInfo['B' - 'A'].list) == -88);
+        1: 1271:    assert(lisp_getval(testInfo['P' - 'A'].list) == 0);
+        1: 1272:    assert(testInfo['B' - 'A'].isSet);
+        1: 1273:    assert(!testInfo['P' - 'A'].isSet);
+        1: 1274:    assert(interpResetFunc(testInfo, "RESET", "A"));
+        1: 1275:    assert(!testInfo['A' - 'A'].isSet);
+        1: 1276:    assert(lisp_getval(testInfo['A' - 'A'].list) == 0);
+        1: 1277:    assert(interpResetFunc(testInfo, "RESET", "Z"));
+        1: 1278:    assert(!testInfo['Z' - 'A'].isSet);
+        1: 1279:    assert(lisp_getval(testInfo['Z' - 'A'].list) == 0);
+        -: 1280:    /*l9 has been freed by others*/
+        1: 1281:    lisp_free(&l1);
+        1: 1282:    lisp_free(&l2);
+        1: 1283:    lisp_free(&l3);
+        1: 1284:    lisp_free(&l4);
+        1: 1285:    lisp_free(&l5);
+        1: 1286:    lisp_free(&l6);
+        1: 1287:    lisp_free(&l7);
+        1: 1288:    lisp_free(&l8);
+       27: 1289:    for (int i = 0; i < NUMALPH; i++) {
+       26: 1290:        testInfo[i].isSet = false;
+       26: 1291:        testInfo[i].list = NIL;
+        -: 1292:    }
+        -: 1293:#else 
+        -: 1294:    /*test parseSetFunction*/
+        -: 1295:    strcpy(buffer, "B C");
+        -: 1296:    assert(parseSetFunc("SET", buffer));
+        -: 1297:    strcpy(buffer, "Z '((1 2) 4 5 (6 7))'");
+        -: 1298:    assert(parseSetFunc("SET", buffer));
+        -: 1299:    strcpy(buffer, "Z (LENGTH A)");
+        -: 1300:    assert(parseSetFunc("SET", buffer));
+        -: 1301:    strcpy(buffer, "K NIL");
+        -: 1302:    assert(parseSetFunc("SET", buffer));
+        -: 1303:    strcpy(buffer, "T '())))(**('");
+        -: 1304:    assert(parseSetFunc("SET", buffer));
+        -: 1305:    /*test parsePrintFunction*/
+        -: 1306:    strcpy(buffer, "\"Current doing testing print function\"");
+        -: 1307:    assert(parsePrintFunc("PRINT", buffer));
+        -: 1308:    strcpy(buffer, "H");
+        -: 1309:    assert(parsePrintFunc("PRINT", buffer));
+        -: 1310:    strcpy(buffer, "(LENGTH H)");
+        -: 1311:    assert(parsePrintFunc("PRINT", buffer));
+        -: 1312:    strcpy(buffer, "(MINUS A B)");
+        -: 1313:    assert(parsePrintFunc("PRINT", buffer));
+        -: 1314:    strcpy(buffer, "'(1 2 -5 (5 60))'");
+        -: 1315:    assert(parsePrintFunc("PRINT", buffer));
+        -: 1316:    /*parser considers below case as literal*/
+        -: 1317:    strcpy(buffer, "\"'(((((()'\"");
+        -: 1318:    assert(parsePrintFunc("PRINT", buffer));
+        -: 1319:    /*parser considers below case as literal*/
+        -: 1320:    strcpy(buffer, "\"'*&&$*(&$W)'\"");
+        -: 1321:    assert(parsePrintFunc("PRINT", buffer));
+        -: 1322:    /*test parseListFunction/List*/
+        -: 1323:    strcpy(buffer, "(MINUS A B)");
+        -: 1324:    assert(parseListFunc("CAR", buffer));
+        -: 1325:    strcpy(buffer, "'(1 2 -5 (5 60))'");
+        -: 1326:    assert(parseListFunc("CDR", buffer));
+        -: 1327:    assert(parseList(buffer));
+        -: 1328:    strcpy(buffer, "(LENGTH A) (CONS A B)");
+        -: 1329:    assert(parseTwoList(buffer));
+        -: 1330:    assert(parseListFunc("CONS", buffer));
+        -: 1331:    assert(parseListFunc("GREATER", buffer));
+        -: 1332:    strcpy(buffer, "NIL NIL");
+        -: 1333:    assert(parseListFunc("CONS", buffer));
+        -: 1334:    assert(parseListFunc("LESS", buffer));
+        -: 1335:    assert(parseTwoList(buffer));
+        -: 1336:    strcpy(buffer, "NIL");
+        -: 1337:    assert(parseListFunc("LENGTH", buffer));
+        -: 1338:    assert(parseList(buffer));
+        -: 1339:    /*parser considers below case as literal*/
+        -: 1340:    strcpy(buffer, "'00000)('");
+        -: 1341:    assert(countFrequency(buffer, '0') == 5);
+        -: 1342:    assert(isLiteral(buffer));
+        -: 1343:    assert(parseListFunc("LENGTH", buffer));
+        -: 1344:    assert(parseList(buffer));
+        -: 1345:    strcpy(buffer, "C ')()('");
+        -: 1346:    assert(countValidBrace(buffer) == 0);
+        -: 1347:    assert(parseListFunc("EQUAL", buffer));
+        -: 1348:    assert(parseTwoList(buffer));
+        -: 1349:    getFirstLiteral(buffer);
+        -: 1350:    assert(strsame(buffer, "')()('"));
+        -: 1351:    strcpy(buffer, "'(-1 8 (8))");
+        -: 1352:    assert(!isLiteral(buffer));
+        -: 1353:
+        -: 1354:    strcpy(buffer, "NIL");
+        -: 1355:    assert(parseList("NIL"));
+        -: 1356:    strcpy(buffer, "k");
+        -: 1357:    assert(!parseList(buffer));
+        -: 1358:    strcpy(buffer, "NIl");
+        -: 1359:    assert(!parseList(buffer));
+        -: 1360:    /*parser considers below case as literal*/
+        -: 1361:    strcpy(buffer, "'N'");
+        -: 1362:    assert(isLiteral(buffer));
+        -: 1363:    assert(parseList(buffer));
+        -: 1364:    strcpy(buffer, "'@@@@@'");
+        -: 1365:    getFirstLiteral(buffer);
+        -: 1366:    strsame(buffer, "'@@@@@'");
+        -: 1367:    assert(countFrequency(buffer, '@') == 5);
+        -: 1368:    assert(parseList(buffer));
+        -: 1369:    strcpy(buffer, "(GREATER A B)");
+        -: 1370:    assert(parseList(buffer));
+        -: 1371:    assert(!parseList("HELLO"));
+        -: 1372:    assert(parseTwoList("H H"));
+        -: 1373:    assert(parseTwoList("H NIL"));
+        -: 1374:    assert(!parseTwoList("HI NIL"));
+        -: 1375:    /*parser considers below case as two literals*/
+        -: 1376:    assert(parseTwoList("'**&' ')))(('"));
+        -: 1377:    assert(countValidBrace(buffer) == 0);
+        -: 1378:    assert(parseTwoList("(CONS A B) (LENGTH I)"));
+        -: 1379:    assert(parseCondition("(GREATER A '(5 5 5 (3 4))')"));
+        -: 1380:    assert(parseCondition("(EQUAL '(2 3)' '(5 5 5 (3 4))')"));
+        -: 1381:    assert(parseCondition("(LESS H NIL"));
+        -: 1382:    /*can only reset variable*/
+        -: 1383:    assert(parseResetFunc("RESET", "A"));
+        -: 1384:    assert(!parseResetFunc("RESET", "NIL"));
+        -: 1385:    assert(!parseResetFunc("RESET", "'(2 4 6 8)'"));
+        -: 1386:    /*can only swap between variables*/
+        -: 1387:    assert(parseSwapFunc("SWAP", "X Y"));
+        -: 1388:    assert(parseSwapFunc("SWAP", "X       Z"));
+        -: 1389:    assert(parseSwapFunc("SWAP", "X Z"));
+        -: 1390:    assert(!parseSwapFunc("SWAP", "X '1'"));
+        -: 1391:    assert(!parseSwapFunc("SWAP", "NIL N"));
+        -: 1392:    assert(!parseSwapFunc("SWAP", "(5 7 (1 2)) N"));
+        -: 1393:
+        -: 1394:#endif
+        -: 1395:    /*helper function testing*/
+        1: 1396:    char str[MAXNUMTOKENS] = "";
+        1: 1397:    strcpy(buffer, "(((S)))");
+        1: 1398:    unParens(buffer);
+        1: 1399:    assert(strsame(buffer, "S"));
+        1: 1400:    strcpy(str, "WR_UITEH((*)");
+        1: 1401:    getFirstToken(buffer, str);
+        1: 1402:    assert(strsame(buffer, "WR_UITEH((*)"));
+        1: 1403:    assert(strsame(str, ""));
+        1: 1404:    strcpy(buffer, "(2345)"), strcpy(str, buffer);
+        1: 1405:    getFirstToken(buffer, str);
+        1: 1406:    assert(strsame(buffer, "(2345)"));
+        1: 1407:    assert(strsame(rest, ""));
+        1: 1408:    assert(!isCompare("BIGGER"));
+        1: 1409:    assert(!isCompare("smaller"));
+        1: 1410:    assert(!isCompare("Less"));
+        1: 1411:    assert(!isCompare("NIL"));
+        1: 1412:    assert(isCompare("GREATER") && isCompare("LESS") && isCompare("EQUAL"));
+        1: 1413:    assert(isBrace('(') && isBrace(')'));
+        1: 1414:    assert(!isBrace(' '));
+        1: 1415:    assert(!isBrace('}'));
+        1: 1416:    strcpy(buffer, "(PRINT '(5 9)') (SET H (CONS A B)) (PRINT \"NUCLEI LANGUAGE\")");
+        1: 1417:    sepFirstInstrct(buffer, rest);
+        1: 1418:    assert(strsame(buffer, "(PRINT '(5 9)')"));
+        1: 1419:    getFirstLiteral(buffer);
+        1: 1420:    strsame(buffer, "'(5 9)'");
+        1: 1421:    assert(strsame(rest, "(SET H (CONS A B)) (PRINT \"NUCLEI LANGUAGE\")"));
+        1: 1422:    strcpy(buffer, rest);
+        1: 1423:    sepFirstInstrct(buffer, rest);
+        1: 1424:    assert(strsame(buffer, "(SET H (CONS A B))"));
+        1: 1425:    assert(countFrequency(buffer, '(') == 2);
+        1: 1426:    assert(strsame(rest, "(PRINT \"NUCLEI LANGUAGE\")"));
+        1: 1427:    strcpy(buffer, rest);
+        1: 1428:    sepFirstInstrct(buffer, rest);
+        1: 1429:    assert(strsame(buffer, "(PRINT \"NUCLEI LANGUAGE\")"));
+        1: 1430:    assert(strsame(rest, ""));
+        1: 1431:    assert(countFrequency(buffer, '"') == 2);
+        1: 1432:    assert(isConstString("\"NIL\""));
+        1: 1433:    assert(!isConstString(""));
+        1: 1434:    assert(isConstString("\"INTERPING LISP...\""));
+        1: 1435:    assert(!isConstString("'INTERPING LISP...'"));
+        1: 1436:    assert(!isConstString("(INTERPING LISP...)"));
+        1: 1437:    assert(isCondition("IF") && isCondition("WHILE"));
+        1: 1438:    assert(!isCondition("if"));
+        1: 1439:    assert(!isCondition("While"));
+        1: 1440:    assert(isOperation("PLUS") && isOperation("MOD"));
+        1: 1441:    assert(isOperation("MUL") && isOperation("DIV"));
+        1: 1442:    assert(!isOperation("Minus") && !isOperation("mul"));
+        1: 1443:    assert(isLiteral("'A'") && isLiteral("' '") && isLiteral("'()'"));
+        1: 1444:    assert(!isLiteral("' (1 2 5 ( 9 8 ))"));
+        1: 1445:    assert(countValidBrace("' (1 2 5 ( 9 8 ))") == 0);
+        1: 1446:    assert(countValidBrace("") == 0);
+        1: 1447:    assert(isLiteral("'NIL'") && !isLiteral("NULL"));
+        1: 1448:    assert(countValidBrace("(1 2 5 '( 9 8 )'") == 1);
+        1: 1449:    assert(countValidBrace("'( 9 8 )' ))))") == -4);
+        1: 1450:    assert(!isVariable("a"));
+        1: 1451:    assert(!isVariable("A_"));
+        1: 1452:    assert(!isVariable("A "));
+        1: 1453:    assert(!isVariable(" A "));
+        1: 1454:    assert(isLisp("CDR") && isLisp("CAR") && isLisp("CONS"));
+        1: 1455:    assert(!isLisp("CON"));
+        1: 1456:    assert(!isLisp("Car"));
+        1: 1457:    assert(!isLisp("cdr"));
+        -: 1458:
+        1: 1459:}
+        -: 1460:
